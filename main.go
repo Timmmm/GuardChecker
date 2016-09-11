@@ -184,6 +184,7 @@ func fixFile(path string, info os.FileInfo, err error) error {
 		lines, err := readLines(path)
 		if err != nil {
 			log.Println("Error reading file:", err)
+			return nil
 		}
 
 		hasGuards := fileHasCppIncludeGuards(lines)
@@ -193,11 +194,13 @@ func fixFile(path string, info os.FileInfo, err error) error {
 			modifiedLines, err := addCppIncludeGuards(lines)
 			if err != nil {
 				log.Println("Error adding include guards:", err)
+				return nil
 			}
 
 			err = writeLines(modifiedLines, path)
 			if err != nil {
 				log.Println("Error writing to file:", err)
+				return nil
 			}
 		}
 	}
