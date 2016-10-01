@@ -69,11 +69,12 @@ func writeLines(lines []string, path string) error {
 }
 
 // These are some *very* simple regexes for detecting the include guards.
-var ifdefcppRegex *regexp.Regexp = regexp.MustCompile(`#ifdef\s+__cplusplus(\s+.*)?`)
-var externcRegex *regexp.Regexp = regexp.MustCompile(`extern\s+"C"(\s+.*)?`)
-var endifRegex *regexp.Regexp = regexp.MustCompile(`#endif(\s+.*)?`)
+var ifdefcppRegex *regexp.Regexp = regexp.MustCompile(`#ifdef\s+__cplusplus(\s.*)?`)
+var externcRegex *regexp.Regexp = regexp.MustCompile(`extern\s+"C"(\s.*)?`)
+var endifRegex *regexp.Regexp = regexp.MustCompile(`#endif(\s.*)?`)
 var closeblockRegex *regexp.Regexp = regexp.MustCompile(`}.*`)
-var defineRegex *regexp.Regexp = regexp.MustCompile(`#define\s+.*`)
+var defineRegex *regexp.Regexp = regexp.MustCompile(`#define\s.*`)
+var includeRegex *regexp.Regexp = regexp.MustCompile(`#include\s.*`)
 
 // fileHasCppIncludeGuards does a rough check for C++ include guards. It might
 // not always be right if you write them in a weird way (it uses fallible regexes).
@@ -116,13 +117,13 @@ func fileHasCppIncludeGuards(lines []string) bool {
 
 // addCppIncludeGuards tries to insert C++ include guards just inside the
 // normal header include guards. It does this in a really naive way so check the
-// results! Basically it inserts them after the first #define, and before the last
+// results! Basically it inserts them after the last #include, and before the last
 // #endif
 //
 // It preserves existing line endings but always uses '\n' on newly inserted lines.
 func addCppIncludeGuards(lines []string) (modifiedLines []string, err error) {
 
-	modifiedLines = make([]string, 0, len(lines)+8)
+	modifiedLines = make([]string, 0, len(lines)+10)
 
 	// Find the first line matching the #define regex, and the last line matching
 	// the #endif regex.
@@ -135,6 +136,27 @@ func addCppIncludeGuards(lines []string) (modifiedLines []string, err error) {
 		}
 	}
 
+	if firstDefine == -1 {
+		err = errors.New("Couldn't find first #define")
+		return
+	}
+
+	// From the first #define, keep going until we get to a line that doesn't start
+	// with / or * or #include. Insert the guards before that.
+	firstCode := -1
+	for i := firstDefine + 1; i < len(lines); i += 1 {
+		trimmedLine := strings.TrimSpace(lines[i])
+		if trimmedLine != "" && !includeRegex.MatchString(trimmedLine) {
+			firstCode = i
+			break
+		}
+	}
+
+	if firstCode == -1 {
+		err = errors.New("Couldn't find first bit of code")
+		return
+	}
+
 	lastEndif := -1
 	for i := len(lines) - 1; i >= 0; i -= 1 {
 		if endifRegex.MatchString(strings.TrimSpace(lines[i])) {
@@ -143,33 +165,27 @@ func addCppIncludeGuards(lines []string) (modifiedLines []string, err error) {
 		}
 	}
 
-	if firstDefine == -1 {
-		err = errors.New("Couldn't find first #define")
-		return
-	}
-
 	if lastEndif == -1 {
 		err = errors.New("Couldn't find last #endif")
 		return
 	}
 
 	for i, line := range lines {
-		if i == firstDefine {
+		if i == firstCode {
 			// Add a couple of lines afterwards...
-			modifiedLines = append(modifiedLines, line)
-			modifiedLines = append(modifiedLines, "\n")
 			modifiedLines = append(modifiedLines, "#ifdef __cplusplus\n")
 			modifiedLines = append(modifiedLines, "extern \"C\" {\n")
 			modifiedLines = append(modifiedLines, "#endif\n")
-		} else if i == lastEndif {
+			modifiedLines = append(modifiedLines, "\n")
+		}
+		if i == lastEndif {
 			modifiedLines = append(modifiedLines, "#ifdef __cplusplus\n")
 			modifiedLines = append(modifiedLines, "}\n")
 			modifiedLines = append(modifiedLines, "#endif\n")
 			modifiedLines = append(modifiedLines, "\n")
-			modifiedLines = append(modifiedLines, line)
-		} else {
-			modifiedLines = append(modifiedLines, line)
 		}
+
+		modifiedLines = append(modifiedLines, line)
 	}
 	return
 }
